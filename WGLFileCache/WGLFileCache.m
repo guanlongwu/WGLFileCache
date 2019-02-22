@@ -9,9 +9,14 @@
 #import "WGLFileCache.h"
 #import <CommonCrypto/CommonDigest.h>
 
+#define Lock() dispatch_semaphore_wait(self->_lock, DISPATCH_TIME_FOREVER)
+#define Unlock() dispatch_semaphore_signal(self->_lock)
+
 static const NSString *kCacheDefaultName = @"defaultNameForWGLFileCache";
 
-@interface WGLFileCache ()
+@interface WGLFileCache () {
+    dispatch_semaphore_t _lock;
+}
 @property (nonatomic, strong) dispatch_queue_t ioQueue;//io操作队列
 @property (nonatomic, strong) NSCache *memCache;
 @end
@@ -33,6 +38,7 @@ static const NSString *kCacheDefaultName = @"defaultNameForWGLFileCache";
 
 - (instancetype)init {
     if (self = [super init]) {
+        _lock = dispatch_semaphore_create(1);
         _memCache = [[NSCache alloc] init];
         _ioQueue = dispatch_queue_create("com.wugl.WGLFileCache.queue", DISPATCH_QUEUE_SERIAL);
     }
@@ -43,7 +49,9 @@ static const NSString *kCacheDefaultName = @"defaultNameForWGLFileCache";
     if (!data || urlString.length == 0) {
         return NO;
     }
+    Lock();
     [self.memCache setObject:data forKey:urlString];
+    Unlock();
     BOOL result = NO;
     @autoreleasepool {
         result = [self storeCacheToDisk:data forURLString:urlString];
@@ -74,7 +82,9 @@ static const NSString *kCacheDefaultName = @"defaultNameForWGLFileCache";
     }
     dispatch_async(self.ioQueue, ^{
         //首先取缓存
+        Lock();
         NSData *diskData = [self.memCache objectForKey:urlString];
+        Unlock();
         if (!diskData) {
             //缓存没有，取磁盘
             @autoreleasepool {
@@ -91,7 +101,9 @@ static const NSString *kCacheDefaultName = @"defaultNameForWGLFileCache";
     if (urlString.length == 0) {
         return NO;
     }
+    Lock();
     [self.memCache removeObjectForKey:urlString];
+    Unlock();
     BOOL result = [self removeCacheFromDiskForURLString:urlString];
     return result;
 }
@@ -112,7 +124,9 @@ static const NSString *kCacheDefaultName = @"defaultNameForWGLFileCache";
 }
 
 - (void)clearAllCache {
+    Lock();
     [self.memCache removeAllObjects];
+    Unlock();
     [self clearAllCacheInDisk];
 }
 
@@ -130,7 +144,9 @@ static const NSString *kCacheDefaultName = @"defaultNameForWGLFileCache";
     if (urlString.length == 0) {
         return NO;
     }
+    Lock();
     NSData *data = [self.memCache objectForKey:urlString];
+    Unlock();
     if (!data) {
         return [self cacheExistInDiskForURLString:urlString];
     }
@@ -150,7 +166,9 @@ static const NSString *kCacheDefaultName = @"defaultNameForWGLFileCache";
         dispatch_async(self.ioQueue, ^{
             [self getCacheForURLString:urlString completion:^(NSData *cache) {
                 if (cache) {
+                    Lock();
                     [self.memCache setObject:cache forKey:urlString];
+                    Unlock();
                 }
             }];
         });

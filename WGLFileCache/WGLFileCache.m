@@ -9,12 +9,11 @@
 #import "WGLFileCache.h"
 #import <CommonCrypto/CommonDigest.h>
 
-static const NSString *kCacheDefaultName = @"defaultNameForHYFileCache";
+static const NSString *kCacheDefaultName = @"defaultNameForWGLFileCache";
 
 @interface WGLFileCache ()
 @property (nonatomic, strong) dispatch_queue_t ioQueue;//io操作队列
 @property (nonatomic, strong) NSCache *memCache;
-@property (nonatomic, strong) NSString *cacheDirectory;//磁盘缓存路径
 @end
 
 @implementation WGLFileCache
@@ -40,34 +39,34 @@ static const NSString *kCacheDefaultName = @"defaultNameForHYFileCache";
     return self;
 }
 
-- (BOOL)storeCache:(NSData *)data forKey:(NSString *)key {
-    if (!data || key.length == 0) {
+- (BOOL)storeCache:(NSData *)data forURLString:(NSString *)urlString {
+    if (!data || urlString.length == 0) {
         return NO;
     }
-    [self.memCache setObject:data forKey:key];
+    [self.memCache setObject:data forKey:urlString];
     BOOL result = NO;
     @autoreleasepool {
-        result = [self storeCacheToDisk:data forKey:key];
+        result = [self storeCacheToDisk:data forURLString:urlString];
     }
     return result;
 }
 
-- (BOOL)storeCacheToDisk:(NSData *)data forKey:(NSString *)key {
-    if (!data || key.length == 0) {
+- (BOOL)storeCacheToDisk:(NSData *)data forURLString:(NSString *)urlString {
+    if (!data || urlString.length == 0) {
         return NO;
     }
     dispatch_async(self.ioQueue, ^{
-        if (![[NSFileManager defaultManager] fileExistsAtPath:self.cacheDirectory]) {
-            [[NSFileManager defaultManager] createDirectoryAtPath:self.cacheDirectory withIntermediateDirectories:YES attributes:nil error:NULL];
+        if (![[NSFileManager defaultManager] fileExistsAtPath:[self getDefaultCacheDirectory]]) {
+            [[NSFileManager defaultManager] createDirectoryAtPath:[self getDefaultCacheDirectory] withIntermediateDirectories:YES attributes:nil error:NULL];
         }
-        NSString *cachePathForKey = [self defaultCachePathForKey:key];
+        NSString *cachePathForKey = [self defaultCachePathForURLString:urlString];
         [[NSFileManager defaultManager] createFileAtPath:cachePathForKey contents:data attributes:nil];
     });
     return YES;
 }
 
-- (void)getCacheForKey:(NSString *)key completion:(void(^)(NSData *cache))completion {
-    if (key.length == 0) {
+- (void)getCacheForURLString:(NSString *)urlString completion:(void(^)(NSData *cache))completion {
+    if (urlString.length == 0) {
         if (completion) {
             completion(nil);
         }
@@ -75,11 +74,11 @@ static const NSString *kCacheDefaultName = @"defaultNameForHYFileCache";
     }
     dispatch_async(self.ioQueue, ^{
         //首先取缓存
-        NSData *diskData = [self.memCache objectForKey:key];
+        NSData *diskData = [self.memCache objectForKey:urlString];
         if (!diskData) {
             //缓存没有，取磁盘
             @autoreleasepool {
-                diskData = [self diskFileDataBySearchingAllPathsForKey:key];
+                diskData = [self diskFileDataBySearchingAllPathsForKey:urlString];
             }
         }
         if (completion) {
@@ -88,22 +87,22 @@ static const NSString *kCacheDefaultName = @"defaultNameForHYFileCache";
     });
 }
 
-- (BOOL)removeCacheForKey:(NSString *)key {
-    if (key.length == 0) {
+- (BOOL)removeCacheForURLString:(NSString *)urlString {
+    if (urlString.length == 0) {
         return NO;
     }
-    [self.memCache removeObjectForKey:key];
-    BOOL result = [self removeCacheFromDiskForKey:key];
+    [self.memCache removeObjectForKey:urlString];
+    BOOL result = [self removeCacheFromDiskForURLString:urlString];
     return result;
 }
 
-- (BOOL)removeCacheFromDiskForKey:(NSString *)key {
-    if (key.length == 0) {
+- (BOOL)removeCacheFromDiskForURLString:(NSString *)urlString {
+    if (urlString.length == 0) {
         return NO;
     }
     dispatch_async(self.ioQueue, ^{
         NSError *error = nil;
-        BOOL result = [[NSFileManager defaultManager] removeItemAtPath:[self defaultCachePathForKey:key] error:&error];
+        BOOL result = [[NSFileManager defaultManager] removeItemAtPath:[self defaultCachePathForURLString:urlString] error:&error];
         BOOL success = (result && error == nil);
         if (NO == success) {
             
@@ -119,39 +118,39 @@ static const NSString *kCacheDefaultName = @"defaultNameForHYFileCache";
 
 - (void)clearAllCacheInDisk {
     dispatch_async(self.ioQueue, ^{
-        [[NSFileManager defaultManager] removeItemAtPath:self.cacheDirectory error:nil];
-        [[NSFileManager defaultManager] createDirectoryAtPath:self.cacheDirectory
+        [[NSFileManager defaultManager] removeItemAtPath:[self getDefaultCacheDirectory] error:nil];
+        [[NSFileManager defaultManager] createDirectoryAtPath:[self getDefaultCacheDirectory]
                                   withIntermediateDirectories:YES
                                                    attributes:nil
                                                         error:NULL];
     });
 }
 
-- (BOOL)cacheExistForKey:(NSString *)key {
-    if (key.length == 0) {
+- (BOOL)cacheExistForURLString:(NSString *)urlString {
+    if (urlString.length == 0) {
         return NO;
     }
-    NSData *data = [self.memCache objectForKey:key];
+    NSData *data = [self.memCache objectForKey:urlString];
     if (!data) {
-        return [self cacheExistInDiskForKey:key];
+        return [self cacheExistInDiskForURLString:urlString];
     }
     return YES;
 }
 
-- (BOOL)cacheExistInDiskForKey:(NSString *)key {
-    if (key.length == 0) {
+- (BOOL)cacheExistInDiskForURLString:(NSString *)urlString {
+    if (urlString.length == 0) {
         return NO;
     }
-    BOOL exists = [[NSFileManager defaultManager] fileExistsAtPath:[self defaultCachePathForKey:key]];
+    BOOL exists = [[NSFileManager defaultManager] fileExistsAtPath:[self defaultCachePathForURLString:urlString]];
     if (!exists) {
-        exists = [[NSFileManager defaultManager] fileExistsAtPath:[self defaultCachePathForKey:key].stringByDeletingPathExtension];
+        exists = [[NSFileManager defaultManager] fileExistsAtPath:[self defaultCachePathForURLString:urlString].stringByDeletingPathExtension];
     }
     if (exists) {
         //磁盘有，则缓存一份到内存
         dispatch_async(self.ioQueue, ^{
-            [self getCacheForKey:key completion:^(NSData *cache) {
+            [self getCacheForURLString:urlString completion:^(NSData *cache) {
                 if (cache) {
-                    [self.memCache setObject:cache forKey:key];
+                    [self.memCache setObject:cache forKey:urlString];
                 }
             }];
         });
@@ -159,9 +158,62 @@ static const NSString *kCacheDefaultName = @"defaultNameForHYFileCache";
     return exists;
 }
 
+#pragma mark - Cache paths
+
+- (NSString *)cachePathForURLString:(NSString *)urlString inDirectory:(NSString *)directory {
+    if (![[NSFileManager defaultManager] fileExistsAtPath:directory]) {
+        [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:NULL];
+    }
+    NSString *filename = [self cacheFileNameForURLString:urlString];
+    return [directory stringByAppendingPathComponent:filename];
+}
+
+- (NSString *)defaultCachePathForURLString:(NSString *)urlString {
+    return [self cachePathForURLString:urlString inDirectory:[self getDefaultCacheDirectory]];
+}
+
+- (NSString *)cacheFileNameForURLString:(NSString *)urlString {
+    const char *str = urlString.UTF8String;
+    if (str == NULL) {
+        str = "";
+    }
+    unsigned char r[CC_MD5_DIGEST_LENGTH];
+    CC_MD5(str, (CC_LONG)strlen(str), r);
+    NSURL *keyURL = [NSURL URLWithString:urlString];
+    NSString *ext = keyURL ? keyURL.pathExtension : urlString.pathExtension;
+    NSString *filename = [NSString stringWithFormat:@"%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%@",
+                          r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10],
+                          r[11], r[12], r[13], r[14], r[15], ext.length == 0 ? @"" : [NSString stringWithFormat:@".%@", ext]];
+    return filename;
+}
+
+- (NSString *)getCacheDirectoryByAppendingPath:(NSString *)subPath {
+    NSArray<NSString *> *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *dir = [paths[0] stringByAppendingPathComponent:subPath];
+    return dir;
+}
+
+- (NSString *)getDefaultCacheDirectory {
+    NSString *dir = [self getCacheDirectoryByAppendingPath:[NSString stringWithFormat:@"%@", kCacheDefaultName]];
+//    if (![[NSFileManager defaultManager] fileExistsAtPath:dir]) {
+//        [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+//    }
+    return dir;
+}
+
+#pragma mark - private
+
+- (void)checkIfQueueIsIOQueue {
+    const char *currentQueueLabel = dispatch_queue_get_label(DISPATCH_CURRENT_QUEUE_LABEL);
+    const char *ioQueueLabel = dispatch_queue_get_label(self.ioQueue);
+    if (strcmp(currentQueueLabel, ioQueueLabel) != 0) {
+        NSLog(@"This method should be called from the ioQueue");
+    }
+}
+
 //获取Key对应的文件缓存
 - (nullable NSData *)diskFileDataBySearchingAllPathsForKey:(nullable NSString *)key {
-    NSString *defaultPath = [self defaultCachePathForKey:key];
+    NSString *defaultPath = [self defaultCachePathForURLString:key];
     NSData *data = [self diskFileDataBySearchingAllPathsForPath:defaultPath];
     return data;
 }
@@ -179,76 +231,15 @@ static const NSString *kCacheDefaultName = @"defaultNameForHYFileCache";
     return nil;
 }
 
-#pragma mark - private
-
-- (void)checkIfQueueIsIOQueue {
-    const char *currentQueueLabel = dispatch_queue_get_label(DISPATCH_CURRENT_QUEUE_LABEL);
-    const char *ioQueueLabel = dispatch_queue_get_label(self.ioQueue);
-    if (strcmp(currentQueueLabel, ioQueueLabel) != 0) {
-        NSLog(@"This method should be called from the ioQueue");
-    }
-}
-
-#pragma mark - Cache paths
-
-- (NSString *)cachePathForKey:(NSString *)key inDirectory:(NSString *)directory {
-    if (![[NSFileManager defaultManager] fileExistsAtPath:directory]) {
-        [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:NULL];
-    }
-    NSString *filename = [self cachedFileNameForKey:key];
-    return [directory stringByAppendingPathComponent:filename];
-}
-
-- (NSString *)defaultCachePathForKey:(NSString *)key {
-    return [self cachePathForKey:key inDirectory:self.cacheDirectory];
-}
-
-- (NSString *)cachedFileNameForKey:(NSString *)key {
-    const char *str = key.UTF8String;
-    if (str == NULL) {
-        str = "";
-    }
-    unsigned char r[CC_MD5_DIGEST_LENGTH];
-    CC_MD5(str, (CC_LONG)strlen(str), r);
-    NSURL *keyURL = [NSURL URLWithString:key];
-    NSString *ext = keyURL ? keyURL.pathExtension : key.pathExtension;
-    NSString *filename = [NSString stringWithFormat:@"%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%@",
-                          r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10],
-                          r[11], r[12], r[13], r[14], r[15], ext.length == 0 ? @"" : [NSString stringWithFormat:@".%@", ext]];
-    return filename;
-}
-
-- (NSString *)cacheKeyForURL:(NSURL *)url {
-    if (!url) {
-        return @"";
-    }
-    return url.absoluteString;
-}
-
-- (NSString *)cacheDirectory {
-    if (!_cacheDirectory) {
-        _cacheDirectory = [self makeDiskCachePath:[NSString stringWithFormat:@"%@", kCacheDefaultName]];
-    }
-    if (![[NSFileManager defaultManager] fileExistsAtPath:_cacheDirectory]) {
-        [[NSFileManager defaultManager] createDirectoryAtPath:_cacheDirectory withIntermediateDirectories:YES attributes:nil error:NULL];
-    }
-    return _cacheDirectory;
-}
-
-- (NSString *)makeDiskCachePath:(NSString*)fullNamespace {
-    NSArray<NSString *> *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    return [paths[0] stringByAppendingPathComponent:fullNamespace];
-}
-
 #pragma mark - Cache Info
 
 //获取磁盘缓存使用的大小。
 - (NSUInteger)getSize {
     __block NSUInteger size = 0;
     dispatch_sync(self.ioQueue, ^{
-        NSDirectoryEnumerator *fileEnumerator = [[NSFileManager defaultManager] enumeratorAtPath:self.cacheDirectory];
+        NSDirectoryEnumerator *fileEnumerator = [[NSFileManager defaultManager] enumeratorAtPath:[self getDefaultCacheDirectory]];
         for (NSString *fileName in fileEnumerator) {
-            NSString *filePath = [self.cacheDirectory stringByAppendingPathComponent:fileName];
+            NSString *filePath = [[self getDefaultCacheDirectory] stringByAppendingPathComponent:fileName];
             NSDictionary<NSString *, id> *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:filePath error:nil];
             size += [attrs fileSize];
         }
@@ -260,7 +251,7 @@ static const NSString *kCacheDefaultName = @"defaultNameForHYFileCache";
 - (NSUInteger)getDiskCount {
     __block NSUInteger count = 0;
     dispatch_sync(self.ioQueue, ^{
-        NSDirectoryEnumerator *fileEnumerator = [[NSFileManager defaultManager] enumeratorAtPath:self.cacheDirectory];
+        NSDirectoryEnumerator *fileEnumerator = [[NSFileManager defaultManager] enumeratorAtPath:[self getDefaultCacheDirectory]];
         count = fileEnumerator.allObjects.count;
     });
     return count;
@@ -268,7 +259,7 @@ static const NSString *kCacheDefaultName = @"defaultNameForHYFileCache";
 
 //异步计算磁盘缓存的大小。
 - (void)calculateSizeWithCompletionBlock:(void(^)(NSUInteger fileCount, NSUInteger totalSize))completionBlock {
-    NSURL *diskCacheURL = [NSURL fileURLWithPath:self.cacheDirectory isDirectory:YES];
+    NSURL *diskCacheURL = [NSURL fileURLWithPath:[self getDefaultCacheDirectory] isDirectory:YES];
     
     dispatch_async(self.ioQueue, ^{
         NSUInteger fileCount = 0;
@@ -292,6 +283,13 @@ static const NSString *kCacheDefaultName = @"defaultNameForHYFileCache";
             });
         }
     });
+}
+
+- (NSString *)cacheKeyForURL:(NSURL *)url {
+    if (!url) {
+        return @"";
+    }
+    return url.absoluteString;
 }
 
 @end
